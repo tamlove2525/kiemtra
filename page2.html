@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <!-- Meta viewport cho mobile -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trang 2 - Kiểm tra kết quả</title>
+  <style>
+    body { font-family: sans-serif; margin: 0; padding: 10px; }
+    h2 { text-align: center; font-size: 1.2rem; }
+    .a4-page {
+      position: relative;
+      width: 95%;
+      min-height: 300px;
+      margin: 10px auto;
+      border: 1px solid #ccc;
+      overflow: hidden;
+      background: #fff;
+    }
+    .transform-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    .a4-page img {
+      width: 100%;
+      display: block;
+      pointer-events: none;
+    }
+    .drawing-canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      z-index: 100;
+      pointer-events: none;
+    }
+    .user-marker {
+      position: absolute;
+      border: 2px solid green;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+    }
+    .orig-marker {
+      position: absolute;
+      border: 2px solid red;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: none;
+    }
+    .textbox {
+      position: absolute;
+      border: 1px solid blue;
+      padding: 5px;
+      min-width: 80px;
+      background: rgba(255,255,255,0.8);
+      pointer-events: auto;
+      font-size: 0.9rem;
+    }
+    .selected {
+      outline: 2px dashed blue;
+    }
+    .correct {
+      color: green;
+      font-weight: bold;
+    }
+    .incorrect {
+      color: red;
+      font-weight: bold;
+      text-decoration: line-through;
+    }
+    button, input[type="range"] {
+      font-size: 1rem;
+      margin: 5px;
+      padding: 5px 10px;
+    }
+    #controls { text-align: center; }
+  </style>
+</head>
+<body>
+  <h2>Trang 2: Kiểm tra kết quả</h2>
+  <div id="controls">
+    <button id="select-user-marker">Chọn điểm đúng</button>
+    <label for="marker-size">Size điểm chọn:</label>
+    <input type="range" id="marker-size" min="10" max="100" value="60">
+    <span id="marker-size-val">60</span>
+    <button id="delete-selected">Xóa điểm</button>
+    <button id="lam-lai">Làm lại</button>
+    <button id="check">Kiểm tra</button>
+    <button id="back">Quay lại</button>
+    <p>(Phím Delete: xóa ảnh hiện hành)</p>
+  </div>
+  <div id="images-container"></div>
+  <p>Điểm: <span id="score">0</span></p>
+  
+  <script>
+    const pagesData = JSON.parse(localStorage.getItem('pagesData')) || [];
+    const userMarkersData = [];
+    let markerSize = parseInt(document.getElementById('marker-size').value, 10);
+    document.getElementById('marker-size').addEventListener('input', function(){
+      markerSize = parseInt(this.value, 10);
+      document.getElementById('marker-size-val').textContent = markerSize;
+    });
+    let currentMode = '';
+    let currentPageDiv = null;
+  
+    document.getElementById('select-user-marker').addEventListener('click', function(){
+      currentMode = 'user-marker';
+    });
+  
+    const container = document.getElementById('images-container');
+    pagesData.forEach((page, index) => {
+      const a4 = document.createElement('div');
+      a4.className = 'a4-page';
+      a4.dataset.pageIndex = index;
+      const transContainer = document.createElement('div');
+      transContainer.className = 'transform-container';
+      transContainer.style.transform = `translate(${page.offsetX}px, ${page.offsetY}px) scale(${page.scale})`;
+      a4.appendChild(transContainer);
+  
+      const img = document.createElement('img');
+      img.src = page.imageSrc;
+      transContainer.appendChild(img);
+  
+      const canvas = document.createElement('canvas');
+      canvas.className = 'drawing-canvas';
+      transContainer.appendChild(canvas);
+      img.onload = function(){
+        canvas.width = a4.clientWidth;
+        canvas.height = a4.clientHeight;
+      };
+  
+      page.textboxes.forEach(tb => {
+        const textbox = document.createElement('div');
+        textbox.className = 'textbox';
+        textbox.style.left = tb.x + 'px';
+        textbox.style.top = tb.y + 'px';
+        const input = document.createElement('input');
+        input.type = 'text';
+        input.addEventListener('click', function(e){ e.stopPropagation(); });
+        textbox.appendChild(input);
+        textbox.addEventListener('click', function(e){
+          e.stopPropagation();
+          textbox.classList.toggle('selected');
+        });
+        transContainer.appendChild(textbox);
+      });
+  
+      userMarkersData.push([]);
+      a4.addEventListener('mouseenter', function(){
+        currentPageDiv = a4;
+      });
+  
+      let drawing = false, ctx = canvas.getContext('2d');
+      a4.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+      a4.addEventListener('mousedown', function(e){
+        if(e.button === 2){
+          drawing = true;
+          ctx.strokeStyle = "rgba(255,255,0,0.2)";
+          ctx.lineWidth = 9;
+          ctx.beginPath();
+          const rect = a4.getBoundingClientRect();
+          ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+        }
+      });
+      a4.addEventListener('mousemove', function(e){
+        if(drawing){
+          const rect = a4.getBoundingClientRect();
+          ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+          ctx.stroke();
+        }
+      });
+      a4.addEventListener('mouseup', function(e){
+        if(e.button === 2 && drawing){
+          drawing = false;
+        }
+      });
+      a4.addEventListener('mouseleave', function(){
+        drawing = false;
+      });
+  
+      a4.addEventListener('click', function(e){
+        if(e.target.tagName.toLowerCase() === 'input') return;
+        if(currentMode !== 'user-marker') return;
+        const rect = a4.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        const marker = document.createElement('div');
+        marker.className = 'user-marker';
+        marker.style.width = markerSize + 'px';
+        marker.style.height = markerSize + 'px';
+        marker.style.left = x + 'px';
+        marker.style.top = y + 'px';
+        marker.addEventListener('click', function(ev){
+          ev.stopPropagation();
+          marker.classList.toggle('selected');
+        });
+        transContainer.appendChild(marker);
+        const pageIdx = parseInt(a4.dataset.pageIndex);
+        userMarkersData[pageIdx].push({ x, y, size: markerSize });
+      });
+  
+      container.appendChild(a4);
+    });
+  
+    window.addEventListener('keydown', function(e){
+      if(e.key === "Delete" && currentPageDiv) {
+        currentPageDiv.remove();
+      }
+    });
+    document.addEventListener('keydown', function(e){
+      if(e.ctrlKey && e.key === 'z' && currentPageDiv && currentMode === 'user-marker'){
+        const pageIdx = parseInt(currentPageDiv.dataset.pageIndex);
+        const transContainer = currentPageDiv.querySelector('.transform-container');
+        const markers = transContainer.querySelectorAll('.user-marker');
+        if(markers.length > 0){
+          markers[markers.length-1].remove();
+          userMarkersData[pageIdx].pop();
+        }
+      }
+    });
+    document.getElementById('delete-selected').addEventListener('click', function(){
+      document.querySelectorAll('.a4-page .selected').forEach(el => el.remove());
+    });
+    // Nút "Làm lại": xóa hết các marker và textbox do người dùng tạo trên trang 2 và reset điểm
+    document.getElementById('lam-lai').addEventListener('click', function(){
+      document.querySelectorAll('.a4-page').forEach(a4 => {
+        const transContainer = a4.querySelector('.transform-container');
+        transContainer.querySelectorAll('.user-marker, .textbox').forEach(el => el.remove());
+      });
+      document.getElementById('score').textContent = 0;
+    });
+    document.getElementById('check').addEventListener('click', function(){
+      let score = 0;
+      document.querySelectorAll('.a4-page').forEach(a4 => {
+        const pageIdx = parseInt(a4.dataset.pageIndex);
+        const page = pagesData[pageIdx];
+        const transContainer = a4.querySelector('.transform-container');
+        page.markers.forEach(orig => {
+          if (!transContainer.querySelector(`.orig-marker[data-x="${orig.x}"][data-y="${orig.y}"]`)) {
+            const marker = document.createElement('div');
+            marker.className = 'orig-marker';
+            marker.style.width = orig.size + 'px';
+            marker.style.height = orig.size + 'px';
+            marker.style.left = orig.x + 'px';
+            marker.style.top = orig.y + 'px';
+            marker.dataset.x = orig.x;
+            marker.dataset.y = orig.y;
+            transContainer.appendChild(marker);
+          }
+        });
+        const textboxes = transContainer.querySelectorAll('.textbox');
+        textboxes.forEach((tb, idx) => {
+          const input = tb.querySelector('input');
+          const userText = input.value.trim();
+          const correctText = page.textboxes[idx].answer.trim();
+          if(tb.querySelector('.checkmark')) tb.querySelector('.checkmark').remove();
+          if(userText === correctText && correctText !== ""){
+            score += 1;
+            input.classList.remove('incorrect');
+            input.classList.add('correct');
+            const check = document.createElement('span');
+            check.className = 'checkmark correct';
+            check.textContent = " ✔";
+            tb.appendChild(check);
+          } else {
+            input.classList.remove('correct');
+            input.classList.add('incorrect');
+            const cross = document.createElement('span');
+            cross.className = 'checkmark incorrect';
+            cross.textContent = " ✖ (Đáp án: " + correctText + ")";
+            tb.appendChild(cross);
+          }
+        });
+        const threshold = 20;
+        page.markers.forEach(orig => {
+          const origMarker = transContainer.querySelector(`.orig-marker[data-x="${orig.x}"][data-y="${orig.y}"]`);
+          if(origMarker){
+            const found = userMarkersData[pageIdx].some(um => {
+              const dist = Math.sqrt((um.x - orig.x) ** 2 + (um.y - orig.y) ** 2);
+              return dist <= threshold;
+            });
+            if(origMarker.querySelector('.checkmark')) origMarker.querySelector('.checkmark').remove();
+            if(found){
+              score += 1;
+              const check = document.createElement('span');
+              check.className = 'checkmark correct';
+              check.textContent = " ✔";
+              origMarker.appendChild(check);
+            } else {
+              const cross = document.createElement('span');
+              cross.className = 'checkmark incorrect';
+              cross.textContent = " ✖";
+              origMarker.appendChild(cross);
+            }
+          }
+        });
+      });
+      document.getElementById('score').textContent = score;
+    });
+    document.getElementById('back').addEventListener('click', function(){
+      window.location.href = 'index.html';
+    });
+  </script>
+</body>
+</html>

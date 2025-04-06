@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+  <meta charset="UTF-8">
+  <!-- Meta viewport để tối ưu cho thiết bị di động -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Trang 1 - Tải ảnh, chọn điểm & ô text</title>
+  <style>
+    /* Sử dụng font-size cơ bản để dễ scale trên mobile */
+    body { font-family: sans-serif; margin: 0; padding: 10px; }
+    h2 { text-align: center; font-size: 1.2rem; }
+    
+    /* Khung ảnh A4: chiều rộng tối đa 95%, chiều cao tối thiểu 300px */
+    .a4-page {
+      position: relative;
+      width: 95%;
+      min-height: 300px;
+      margin: 10px auto;
+      border: 1px solid #ccc;
+      overflow: hidden;
+      cursor: grab;
+      user-select: none;
+      background: #fff;
+    }
+    /* Container chuyển đổi chứa ảnh, marker, textbox, canvas */
+    .transform-container {
+      position: relative;
+      width: 100%;
+      height: 100%;
+    }
+    .a4-page img {
+      width: 100%;
+      display: block;
+      pointer-events: none;
+    }
+    .drawing-canvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      z-index: 100;
+      pointer-events: none;
+    }
+    .marker {
+      position: absolute;
+      border: 2px solid red;
+      border-radius: 50%;
+      transform: translate(-50%, -50%);
+      pointer-events: auto;
+    }
+    .textbox {
+      position: absolute;
+      border: 1px solid blue;
+      padding: 5px;
+      min-width: 80px;
+      background: rgba(255,255,255,0.8);
+      pointer-events: auto;
+      font-size: 0.9rem;
+    }
+    .selected {
+      outline: 2px dashed blue;
+    }
+    /* Các nút và input: scale cho mobile */
+    button, input[type="file"], input[type="range"] {
+      font-size: 1rem;
+      margin: 5px 2px;
+      padding: 5px 10px;
+    }
+    /* Cho các container các button nằm trong khối điều khiển */
+    #controls {
+      text-align: center;
+      margin-bottom: 10px;
+    }
+  </style>
+</head>
+<body>
+  <h2>Trang 1: Tải ảnh, chọn điểm & ô text</h2>
+  <!-- Khi mở trang mới, xóa dữ liệu cũ để không hiển thị ảnh/điểm từ phiên trước -->
+  <script>
+    localStorage.removeItem('pagesData');
+  </script>
+  
+  <div id="controls">
+    <!-- Upload ảnh -->
+    <input type="file" id="upload" accept="image/*" multiple>
+    <br>
+    <button id="select-marker">Chọn điểm</button>
+    <button id="select-textbox">Chọn ô text</button>
+    <label for="marker-size">Size điểm chọn:</label>
+    <input type="range" id="marker-size" min="10" max="100" value="60">
+    <span id="marker-size-val">60</span>
+    <button id="delete-selected">Xóa điểm</button>
+    <button id="lock-size">Chốt size ảnh</button>
+    <button id="unlock-size">Không chốt size ảnh</button>
+    <button id="next-page">Tiếp theo</button>
+    <p>(Phím Delete: xóa ảnh hiện hành)</p>
+  </div>
+  
+  <!-- Container chứa các ảnh -->
+  <div id="images-container"></div>
+  
+  <script>
+    let pagesData = [];
+    let currentMode = '';
+    let markerSize = parseInt(document.getElementById('marker-size').value, 10);
+    let currentPageDiv = null;
+  
+    document.getElementById('marker-size').addEventListener('input', function() {
+      markerSize = parseInt(this.value, 10);
+      document.getElementById('marker-size-val').textContent = markerSize;
+    });
+    document.getElementById('select-marker').addEventListener('click', function(){
+      currentMode = 'marker';
+    });
+    document.getElementById('select-textbox').addEventListener('click', function(){
+      currentMode = 'textbox';
+    });
+    document.getElementById('delete-selected').addEventListener('click', function(){
+      if (!currentPageDiv) return;
+      const container = currentPageDiv.querySelector('.transform-container');
+      const selectedEls = container.querySelectorAll('.marker.selected, .textbox.selected');
+      selectedEls.forEach(el => el.remove());
+    });
+    document.getElementById('lock-size').addEventListener('click', function(){
+      if(!currentPageDiv) return;
+      currentPageDiv.dataset.locked = "true";
+    });
+    document.getElementById('unlock-size').addEventListener('click', function(){
+      if(!currentPageDiv) return;
+      currentPageDiv.dataset.locked = "false";
+    });
+  
+    const imagesContainer = document.getElementById('images-container');
+    document.getElementById('upload').addEventListener('change', function(e) {
+      const files = e.target.files;
+      for (let file of files) {
+        const reader = new FileReader();
+        reader.onload = function(evt) {
+          const a4 = document.createElement('div');
+          a4.className = 'a4-page';
+          a4.dataset.locked = "false";
+          a4.dataset.scale = 1;
+          a4.dataset.offsetX = 0;
+          a4.dataset.offsetY = 0;
+          a4.addEventListener('click', function(e){
+            if(e.shiftKey){
+              a4.classList.toggle('selected');
+            }
+          });
+          let isDragging = false, startX, startY, initOffsetX, initOffsetY;
+          const transContainer = document.createElement('div');
+          transContainer.className = 'transform-container';
+          transContainer.style.transform = `translate(0px, 0px) scale(1)`;
+          a4.appendChild(transContainer);
+          const img = document.createElement('img');
+          img.src = evt.target.result;
+          transContainer.appendChild(img);
+          const canvas = document.createElement('canvas');
+          canvas.className = 'drawing-canvas';
+          transContainer.appendChild(canvas);
+          img.onload = function() {
+            canvas.width = a4.clientWidth;
+            canvas.height = a4.clientHeight;
+          };
+          pagesData.push({
+            imageSrc: evt.target.result,
+            markers: [],
+            textboxes: [],
+            scale: 1,
+            offsetX: 0,
+            offsetY: 0
+          });
+          a4.addEventListener('mouseenter', function(){
+            currentPageDiv = a4;
+          });
+          a4.addEventListener('wheel', function(e){
+            if(a4.dataset.locked === "true") return;
+            e.preventDefault();
+            let scale = parseFloat(a4.dataset.scale);
+            scale = (e.deltaY < 0) ? scale * 1.1 : scale / 1.1;
+            a4.dataset.scale = scale;
+            const pageIndex = Array.from(imagesContainer.children).indexOf(a4);
+            pagesData[pageIndex].scale = scale;
+            let offsetX = parseFloat(a4.dataset.offsetX);
+            let offsetY = parseFloat(a4.dataset.offsetY);
+            transContainer.style.transform = `translate(${offsetX}px, ${offsetY}px) scale(${scale})`;
+          });
+          a4.addEventListener('mousedown', function(e){
+            if(e.button === 0 && a4.dataset.locked !== "true") {
+              startX = e.clientX;
+              startY = e.clientY;
+              initOffsetX = parseFloat(a4.dataset.offsetX);
+              initOffsetY = parseFloat(a4.dataset.offsetY);
+              isDragging = false;
+            }
+          });
+          a4.addEventListener('mousemove', function(e){
+            if(e.buttons !== 1 || a4.dataset.locked === "true") return;
+            let dx = e.clientX - startX;
+            let dy = e.clientY - startY;
+            if(!isDragging && (Math.abs(dx) > 5 || Math.abs(dy) > 5)){
+              isDragging = true;
+            }
+            if(isDragging){
+              let newOffsetX = initOffsetX + dx;
+              let newOffsetY = initOffsetY + dy;
+              a4.dataset.offsetX = newOffsetX;
+              a4.dataset.offsetY = newOffsetY;
+              const pageIndex = Array.from(imagesContainer.children).indexOf(a4);
+              pagesData[pageIndex].offsetX = newOffsetX;
+              pagesData[pageIndex].offsetY = newOffsetY;
+              let scale = parseFloat(a4.dataset.scale);
+              transContainer.style.transform = `translate(${newOffsetX}px, ${newOffsetY}px) scale(${scale})`;
+            }
+          });
+          let drawing = false, ctx = canvas.getContext('2d');
+          a4.addEventListener('contextmenu', function(e){ e.preventDefault(); });
+          a4.addEventListener('mousedown', function(e){
+            if(e.button === 2) {
+              drawing = true;
+              ctx.strokeStyle = "rgba(255,255,0,0.2)";
+              ctx.lineWidth = 9;
+              ctx.beginPath();
+              const rect = a4.getBoundingClientRect();
+              ctx.moveTo(e.clientX - rect.left, e.clientY - rect.top);
+            }
+          });
+          a4.addEventListener('mousemove', function(e){
+            if(drawing){
+              const rect = a4.getBoundingClientRect();
+              ctx.lineTo(e.clientX - rect.left, e.clientY - rect.top);
+              ctx.stroke();
+            }
+          });
+          a4.addEventListener('mouseup', function(e){
+            if(e.button === 2 && drawing){
+              drawing = false;
+            }
+          });
+          a4.addEventListener('mouseleave', function(){
+            drawing = false;
+          });
+          a4.addEventListener('click', function(e){
+            if(isDragging){ isDragging = false; return; }
+            if(e.target.tagName.toLowerCase() === 'input') return;
+            const rect = a4.getBoundingClientRect();
+            const x = e.clientX - rect.left;
+            const y = e.clientY - rect.top;
+            const pageIndex = Array.from(imagesContainer.children).indexOf(a4);
+            if(currentMode === 'marker'){
+              const marker = document.createElement('div');
+              marker.className = 'marker';
+              marker.style.width = markerSize + 'px';
+              marker.style.height = markerSize + 'px';
+              marker.style.left = x + 'px';
+              marker.style.top = y + 'px';
+              marker.addEventListener('click', function(ev){
+                ev.stopPropagation();
+                marker.classList.toggle('selected');
+              });
+              transContainer.appendChild(marker);
+              pagesData[pageIndex].markers.push({ x, y, size: markerSize });
+            }
+            if(currentMode === 'textbox'){
+              const textbox = document.createElement('div');
+              textbox.className = 'textbox';
+              textbox.style.left = x + 'px';
+              textbox.style.top = y + 'px';
+              const input = document.createElement('input');
+              input.type = 'text';
+              input.addEventListener('click', function(ev){ ev.stopPropagation(); });
+              textbox.appendChild(input);
+              textbox.addEventListener('click', function(ev){
+                ev.stopPropagation();
+                textbox.classList.toggle('selected');
+              });
+              transContainer.appendChild(textbox);
+              pagesData[pageIndex].textboxes.push({ x, y, answer: "" });
+              input.addEventListener('blur', function(){
+                pagesData[pageIndex].textboxes[pagesData[pageIndex].textboxes.length - 1].answer = input.value;
+              });
+            }
+          });
+          imagesContainer.appendChild(a4);
+        }
+        reader.readAsDataURL(file);
+      }
+    });
+    window.addEventListener('keydown', function(e){
+      if(e.key === "Delete" && currentPageDiv) {
+        currentPageDiv.remove();
+        const idx = Array.from(imagesContainer.children).indexOf(currentPageDiv);
+        pagesData.splice(idx, 1);
+      }
+    });
+    document.addEventListener('keydown', function(e){
+      if(e.ctrlKey && e.key === 'z' && currentPageDiv) {
+        const pageIndex = Array.from(imagesContainer.children).indexOf(currentPageDiv);
+        const container = currentPageDiv.querySelector('.transform-container');
+        const markers = container.querySelectorAll('.marker');
+        const textboxes = container.querySelectorAll('.textbox');
+        if(currentMode === 'marker' && markers.length > 0){
+          markers[markers.length-1].remove();
+          pagesData[pageIndex].markers.pop();
+        }
+        if(currentMode === 'textbox' && textboxes.length > 0){
+          textboxes[textboxes.length-1].remove();
+          pagesData[pageIndex].textboxes.pop();
+        }
+      }
+    });
+    document.getElementById('next-page').addEventListener('click', function(){
+      localStorage.setItem('pagesData', JSON.stringify(pagesData));
+      window.location.href = 'page2.html';
+    });
+  </script>
+</body>
+</html>
